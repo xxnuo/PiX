@@ -33,7 +33,7 @@ it("switches from the menu and shares current state without rewriting historical
   const wrapper = mount(GitBranchPicker, { global: { plugins: [i18n] }, attachTo: document.body });
   const second = mount(GitBranchPicker, { global: { plugins: [i18n] } });
   await wrapper.get("button").trigger("click"); await flushPromises();
-  expect(document.querySelector('.git-branch-hint')?.textContent).toContain("workspace");
+  expect(document.querySelector('.git-branch-hint')?.textContent).toContain("folder");
   (document.querySelector('[data-git-branch="feature/Next"]') as HTMLElement).click();
   await flushPromises();
   expect(desktop.invoke).toHaveBeenCalledWith("git.switch", { branch: "feature/Next", cwd: "/repo" });

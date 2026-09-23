@@ -140,7 +140,7 @@ watch(
             :disabled="busy || !path.trim()"
             @click="submit"
           >
-            {{ t("welcome.openProject") }}
+            {{ t("boards.addFolder") }}
           </Button>
         </footer>
       </DialogContent>

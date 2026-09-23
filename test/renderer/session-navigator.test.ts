@@ -6,6 +6,7 @@ import { projectSession } from "../../src/shared/session";
 import SessionNavigator from "../../src/renderer/features/navigator/SessionNavigator.vue";
 import { i18n } from "../../src/renderer/i18n";
 import { useSessionStore } from "../../src/renderer/stores/session";
+import { useBoardStore } from "../../src/renderer/stores/boards";
 import { useLayoutStore } from "../../src/renderer/stores/layout";
 
 const summary = (id: string): SessionSummary => ({
@@ -31,6 +32,7 @@ describe("session project navigator", () => {
       runtime: { available: true, isStreaming: false }, graph: { id: row.path, epoch: "e", revision: 1, runs: [] },
     } as unknown as SessionSnapshot;
     session.hydrate(record.project, [row], [record], idle);
+    useBoardStore().state = { boards: [{ id: "board", name: "Board", groupId: null, projectIds: [record.id] }], groups: [], activeBoardId: "board" };
     const stop = vi.spyOn(session, "stop").mockResolvedValue();
     const wrapper = mount(SessionNavigator, { attachTo: document.body, global: { plugins: [pinia, i18n] } });
     try {
@@ -63,6 +65,7 @@ describe("session project navigator", () => {
       connected: true,
     };
     useSessionStore().projects = [record];
+    useBoardStore().state = { boards: [{ id: "board", name: "Board", groupId: null, projectIds: [record.id] }], groups: [], activeBoardId: "board" };
     const wrapper = mount(SessionNavigator, { attachTo: document.body, global: { plugins: [pinia, i18n] } });
     try {
       await wrapper.get(".project-main").trigger("click");
@@ -155,6 +158,7 @@ describe("session project navigator", () => {
     };
     const session = useSessionStore();
     session.projects = [local, remote];
+    useBoardStore().state = { boards: [{ id: "board", name: "Board", groupId: null, projectIds: [local.id, remote.id] }], groups: [], activeBoardId: "board" };
     session.activeProjectId = local.id;
     const wrapper = mount(SessionNavigator, { global: { plugins: [pinia, i18n] } });
 

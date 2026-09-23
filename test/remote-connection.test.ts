@@ -311,6 +311,21 @@ function remoteSnapshot(path = "/old/session.jsonl", running = false): SessionSn
   } as unknown as SessionSnapshot;
 }
 
+test("board inspection reads a pooled remote session without selecting it", async t => {
+  const { controller, old, project } = controllerFixture(t);
+  const calls: Array<[string, unknown]> = [];
+  const snapshot = remoteSnapshot("/old/other.jsonl");
+  old.request = async (route, input) => { calls.push([route, input]); return snapshot; };
+  const current = remoteSnapshot("/old/current.jsonl");
+  controller.current = current;
+
+  const inspected = await controller.invoke("session.inspect", { projectId: projectId(project), path: snapshot.session.path });
+
+  assert.equal(inspected, snapshot);
+  assert.deepEqual(calls, [["session.inspect", { path: snapshot.session.path }]]);
+  assert.equal(controller.current, current);
+});
+
 for (const order of [["A", "B"], ["B", "A"]]) {
   test(`remote session selection follows click order when replies arrive ${order.join(" then ")}`, async t => {
     const { controller, old } = controllerFixture(t);

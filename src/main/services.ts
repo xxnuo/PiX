@@ -32,6 +32,7 @@ import { promisify } from "node:util";
 import { spawn as spawnPty, type IPty } from "node-pty";
 import type {
   AppSettings,
+  BoardState,
   DirectoryListing,
   FileDocument,
   FileNode,
@@ -45,6 +46,7 @@ import type {
   ShellResult,
 } from "../shared/types.js";
 import { projectId } from "../shared/types.js";
+import { validateBoardState } from "../shared/boards.js";
 import { validateShortcutOverrides } from "../shared/shortcuts.js";
 import { normalizeTheme } from "../shared/theme.js";
 import { parseSessionJsonl, summarizeSession } from "../shared/session.js";
@@ -282,7 +284,8 @@ export class SettingsService {
     return this.bundle();
   }
   reset() {
-    atomic(this.appPath, {});
+    const { boardState, recentProjects } = readJson(this.appPath);
+    atomic(this.appPath, { ...(boardState ? { boardState } : {}), ...(recentProjects ? { recentProjects } : {}) });
     return this.bundle();
   }
   /**
@@ -345,6 +348,25 @@ export class SettingsService {
   saveLayout(layout: LayoutState) {
     atomic(this.appPath, merge(readJson(this.appPath), { layout }));
   }
+  boardState(): BoardState {
+    const raw = readJson(this.appPath);
+    if (raw.boardState !== undefined) return validateBoardState(raw.boardState);
+    const projects = this.projectHistory();
+    const boards = projects.map(record => ({
+      id: randomUUID(), name: record.project.name, groupId: null, projectIds: [record.id],
+    }));
+    if (!boards.length) boards.push({ id: randomUUID(), name: "Board 1", groupId: null, projectIds: [] });
+    const last = projects.find(record => record.project.path === raw.lastProject && !record.project.remote);
+    const index = last ? projects.indexOf(last) : -1;
+    const state: BoardState = { boards, groups: [], activeBoardId: boards[index >= 0 ? index : 0]!.id };
+    this.saveBoardState(state);
+    return state;
+  }
+  saveBoardState(state: BoardState): BoardState {
+    const valid = validateBoardState(state);
+    atomic(this.appPath, { ...readJson(this.appPath), boardState: valid });
+    return valid;
+  }
   lastProject(p: string) {
     this.update({ lastProject: resolve(p) });
   }
@@ -379,7 +401,16 @@ export class SettingsService {
   }
   forgetProject(id: string) {
     const recentProjects = this.projectHistory().filter((item) => item.id !== id);
-    this.update({ recentProjects });
+    const raw = readJson(this.appPath);
+    const boardState = raw.boardState === undefined ? undefined : validateBoardState(raw.boardState);
+    if (boardState) for (const board of boardState.boards) {
+      board.projectIds = board.projectIds.filter(projectId => projectId !== id);
+      board.sessions = board.sessions?.filter(session => session.projectId !== id);
+      if (board.positions) delete board.positions[id];
+      if (board.positions) for (const key of Object.keys(board.positions))
+        if (key.startsWith(`node:${JSON.stringify([id]).slice(0, -1)},`)) delete board.positions[key];
+    }
+    atomic(this.appPath, { ...raw, recentProjects, ...(boardState ? { boardState } : {}) });
     return recentProjects;
   }
 }

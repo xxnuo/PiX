@@ -4,6 +4,7 @@ import { projectSession } from "../../src/shared/session";
 import type { ProjectGroup, ProjectInfo, RawSessionEntry, SessionSnapshot, SessionSummary } from "../../src/shared/types";
 import { desktop } from "../../src/renderer/api";
 import { useSessionStore } from "../../src/renderer/stores/session";
+import { useBoardStore } from "../../src/renderer/stores/boards";
 import { useWorkspaceStore } from "../../src/renderer/stores/workspace";
 
 const first: RawSessionEntry[] = [
@@ -67,6 +68,26 @@ describe("session stream focus", () => {
     expect(invoke.mock.calls.some(([route]) => route === "session.list")).toBe(true);
     expect(session.current?.session.path).toBe("new.jsonl");
     expect(session.sessions.map(row => row.path)).toEqual(["new.jsonl"]);
+  });
+
+  it("keeps both board sessions when a fork broadcast arrives before its reply", async () => {
+    const session = useSessionStore();
+    hydrate(session, snapshot(first, "a1"));
+    const boards = useBoardStore();
+    boards.state = { boards: [{ id: "board", name: "Board", groupId: null,
+      projectIds: [session.activeProjectId], sessions: [{ projectId: session.activeProjectId, path: "session.jsonl" }] }],
+    groups: [], activeBoardId: "board" };
+    const forked = { ...session.current!, session: { ...session.current!.session, path: "fork.jsonl" } };
+    vi.spyOn(desktop, "invoke").mockImplementation(async (route, input) => {
+      if (route === "agent.control") { session.applySnapshot(forked); return forked; }
+      if (route === "board.save") return (input as { state: unknown }).state;
+      return [];
+    });
+
+    await session.control({ action: "fork", entryId: "u1" });
+
+    expect(boards.active?.sessions?.map(item => item.path)).toEqual(["session.jsonl", "fork.jsonl"]);
+    expect(session.current?.session.path).toBe("fork.jsonl");
   });
 
   it("applies project-group refreshes from any project without touching the view", () => {

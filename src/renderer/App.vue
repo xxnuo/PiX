@@ -31,12 +31,12 @@ import SettingsPage from "./features/settings/SettingsPage.vue";
 import { shortcutForEvent, shortcutsBlocked } from "./keyboard-shortcuts";
 import AppTitlebar from "./features/workbench/AppTitlebar.vue";
 import PathPicker from "./features/workbench/PathPicker.vue";
-import WelcomeScreen from "./features/workbench/WelcomeScreen.vue";
 import WslConnectDialog from "./features/workbench/WslConnectDialog.vue";
 import Workbench from "./features/workbench/Workbench.vue";
 import { useLayoutStore } from "./stores/layout";
 import { handleHistoryKeys, history, historyEnabled, HistoryButton, HistoryPanel, togglePanel } from "./experimental/history";
 import { useSessionStore } from "./stores/session";
+import { useBoardStore } from "./stores/boards";
 import { useWorkspaceStore } from "./stores/workspace";
 
 interface BootstrapData {
@@ -52,6 +52,7 @@ const settingsPage = ref<InstanceType<typeof SettingsPage>>();
 function closeSettings() { settingsPage.value?.close(); }
 
 const session = useSessionStore();
+const boards = useBoardStore();
 const workspace = useWorkspaceStore();
 const layout = useLayoutStore();
 const { locale, t } = useI18n();
@@ -134,13 +135,37 @@ async function bootstrap() {
   const request = ++session.viewRequest;
   try {
     const data = await desktop.invoke<BootstrapData>("app.bootstrap");
+    await boards.load();
     await hydrate(data, data.settings.app.openLastSessionOnStartup, request);
+    await restoreBoardSession();
   } catch (error) {
     if (request !== session.viewRequest) return;
     session.loading = false;
     layout.showNotice(error instanceof Error ? error.message : String(error), "error");
   }
 }
+
+async function restoreBoardSession() {
+  const active = boards.active;
+  if (!active) return;
+  const current = session.current;
+  if (current && active.projectIds.includes(session.activeProjectId) &&
+    !active.sessions?.length) {
+    await boards.addSession(session.activeProjectId, current.session.path);
+    boards.capture(session.activeProjectId, current);
+  }
+  const entries = boards.active?.sessions ?? [];
+  const chosen = entries.find(item => item.projectId === session.activeProjectId && item.path === current?.session.path)
+    ?? entries.at(-1);
+  if (!chosen) return;
+  if (chosen.projectId === session.activeProjectId && chosen.path === current?.session.path) return;
+  const record = session.projects.find(item => item.id === chosen.projectId);
+  if (record) await openProjectSession(record, chosen.path);
+}
+
+watch(() => boards.state?.activeBoardId, (id, previous) => {
+  if (id && previous && id !== previous) void restoreBoardSession();
+});
 
 function pickProject() {
   pathPickerMode.value = "project";
@@ -165,7 +190,10 @@ async function submitPickedPath(path: string) {
   const request = ++session.viewRequest;
   try {
     const data = await desktop.invoke<BootstrapData | null>("app.pickProject", { path });
-    if (data) await hydrate(data, false, request);
+    if (data) {
+      await hydrate(data, false, request);
+      if (request === session.viewRequest && session.activeProjectId) await boards.addProject(session.activeProjectId);
+    }
   } catch (error) {
     if (request !== session.viewRequest) return;
     layout.showNotice(error instanceof Error ? error.message : String(error), "error");
@@ -234,6 +262,7 @@ async function connectSsh(input: { host: string; cwd: string; browse?: boolean }
     if (input.browse && data.project) await browseRemoteDirectory(data.project.path);
     else {
       await hydrate(data as BootstrapData, false, request);
+      if (request === session.viewRequest && session.activeProjectId) await boards.addProject(session.activeProjectId);
       remoteBrowseRoot.value = "";
       wslOpen.value = false;
       layout.showNotice(t("notice.connectedTo", { name: input.host }));
@@ -260,6 +289,7 @@ async function connectWsl(input: { distro: string; cwd: string; browse?: boolean
     if (input.browse && data.project) await browseRemoteDirectory(data.project.path);
     else {
       await hydrate(data as BootstrapData, false, request);
+      if (request === session.viewRequest && session.activeProjectId) await boards.addProject(session.activeProjectId);
       remoteBrowseRoot.value = "";
       wslOpen.value = false;
       layout.showNotice(t("notice.connectedTo", { name: input.distro }));
@@ -301,6 +331,7 @@ async function openRemoteDirectory(path: string) {
     // A cancelled dialog can still complete its commit, but a newer project
     // selection must keep its view.
     await hydrate(data, false, request);
+    if (request === session.viewRequest && session.activeProjectId) await boards.addProject(session.activeProjectId);
     remoteBrowseRoot.value = "";
     remoteDirectories.value = [];
     wslOpen.value = false;
@@ -434,14 +465,6 @@ async function submitDelete() {
   await inProject(target.record, () => session.remove(target.path, true));
 }
 
-async function forgetProject(record: ProjectGroup) {
-  try {
-    await session.forgetProject(record.id);
-  } catch (error) {
-    layout.showNotice(error instanceof Error ? error.message : String(error), "error");
-  }
-}
-
 async function requestRename(path: string, current: string) {
   renamePath.value = path;
   renameName.value = current;
@@ -492,6 +515,11 @@ const decodeSessionEvent = sessionEventDecoder(() => desktop.invoke("session.sna
 function onEvent(wireEvent: DesktopEvent) {
   const event = decodeSessionEvent(wireEvent);
   if (!event) return;
+  if (event.type === "board.snapshot") {
+    const payload = event.payload as { projectId: string; snapshot: SessionSnapshot };
+    boards.capture(payload.projectId, payload.snapshot);
+    return;
+  }
   if (event.type === "remote.progress") {
     if (wslOpen.value && wslBusy.value) {
       const { stage } = event.payload as { stage: RemoteConnectStage };
@@ -573,7 +601,10 @@ onMounted(() => {
       state: () => JSON.parse(JSON.stringify({
         loading: session.loading,
         project: workspace.project,
-        welcome: !workspace.project,
+        boards: boards.state,
+        boardSnapshots: Object.fromEntries(Object.entries(boards.snapshots).map(([key, snapshot]) => [key, {
+          path: snapshot.session.path, nodes: snapshot.projection.nodes.length,
+        }])),
         sessions: session.sessions,
         current: session.current,
         commands: session.commands,
@@ -625,13 +656,8 @@ onBeforeUnmount(() => {
           @open-project-session="openProjectSession"
           @rename="renameProjectSession"
           @remove-project-session="removeProjectSession"
-          @forget-project="forgetProject"
         />
       </KeepAlive>
-      <WelcomeScreen
-        v-if="layout.screen === 'workbench' && !workspace.project"
-        @open-project="pickProject"
-      />
     </div>
   </div>
   <CommandPalette @run="runCommand" />

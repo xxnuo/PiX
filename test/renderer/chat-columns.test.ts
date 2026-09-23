@@ -6,6 +6,7 @@ import BranchContextPanel from "../../src/renderer/features/branch-context/Branc
 import GraphPanel from "../../src/renderer/features/graph/GraphPanel.vue";
 import Workbench from "../../src/renderer/features/workbench/Workbench.vue";
 import { useLayoutStore } from "../../src/renderer/stores/layout";
+import { useBoardStore } from "../../src/renderer/stores/boards";
 import { useSessionStore } from "../../src/renderer/stores/session";
 import { i18n } from "../../src/renderer/i18n";
 import { desktop } from "../../src/renderer/api";
@@ -456,6 +457,10 @@ describe("pinned chat columns", () => {
     setActivePinia(pinia);
     const session = useSessionStore();
     const layout = useLayoutStore();
+    session.activeProjectId = "test";
+    useBoardStore().state = { boards: [{ id: "board", name: "Board", groupId: null,
+      projectIds: ["test"], sessions: [{ projectId: "test", path: "s.jsonl" },
+        { projectId: "test", path: "other.jsonl" }] }], groups: [], activeBoardId: "board" };
     session.current = snapshot("a2");
     layout.layout.collapsed.chat = false;
     layout.chatColumns = ["turn:u2", "turn:u3"];

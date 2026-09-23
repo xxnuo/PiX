@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { Focus, Map as MapIcon, Network, Search } from "@lucide/vue";
+import { Focus, LoaderCircle, Map as MapIcon, Network, Plus, Search } from "@lucide/vue";
 import {
   VueFlow,
+  Handle,
+  Position,
   type Edge,
   type Dimensions,
   type GraphNode as FlowNode,
@@ -24,13 +26,18 @@ import { nextFrame, whenTransitionsSettle, whenVisible } from "../../lib/frame";
 import { searchGraphNodeIds } from "../../lib/graph-search";
 import { useLayoutStore } from "../../stores/layout";
 import { useSessionStore } from "../../stores/session";
+import { boardSessionKey, useBoardStore } from "../../stores/boards";
+import { boardNodePositionKey, boardRootPosition } from "../../../shared/boards";
+import type { ProjectGroup } from "../../../shared/types";
+import FolderNode from "./FolderNode.vue";
 import type { GraphNode, PromptImage, RuntimeModel } from "../../../shared/types";
 import DraftNode, { type DraftNodeData } from "./DraftNode.vue";
 import PromptNode, { type PromptNodeData } from "./PromptNode.vue";
 
-const emit = defineEmits<{ newSession: [] }>();
+const emit = defineEmits<{ newSession: []; pickProject: []; activateProject: [record: ProjectGroup]; createProjectSession: [record: ProjectGroup]; openProjectSession: [record: ProjectGroup, path: string] }>();
 const layout = useLayoutStore();
 const session = useSessionStore();
+const boards = useBoardStore();
 const { t } = useI18n();
 const { submitDraft: runDraftSubmit, acceptSubmittedNode: acceptSubmittedDraft, clearSubmittedDraft, submittedNodeId } = useDraftSubmit();
 type RenderNode = Node & { dimensions?: Dimensions; handleBounds?: FlowNode["handleBounds"] };
@@ -61,7 +68,30 @@ let dragFollowsBranch = false;
 let transientNodeIds = new Set<string>();
 const draftParent = ref<string | null>();
 const branchOrder = new Map<string, number>();
-const sessionKey = computed(() => JSON.stringify([session.activeProjectId, session.current?.session.path, session.current?.session.id]));
+const sessionKey = computed(() => JSON.stringify([boards.active?.id, session.activeProjectId, session.current?.session.path, session.current?.session.id]));
+function sessionSlot(project: string, path: string) {
+  return (boards.active?.sessions ?? []).filter(item => item.projectId === project)
+    .findIndex(item => item.path === path);
+}
+const rootOrigin = computed(() => {
+  const index = boards.active?.projectIds.indexOf(session.activeProjectId) ?? -1;
+  if (index < 0) return { x: 0, y: 0 };
+  const root = boardRootPosition(boards.active, session.activeProjectId, index);
+  return { x: root.x + 300, y: root.y + Math.max(0, sessionSlot(session.activeProjectId, session.current?.session.path ?? "")) * 470 };
+});
+const pendingBackgroundCompose = ref<{ projectId: string; path: string; nodeId: string; direction?: BranchDirection }>();
+function openBackground(projectId: string, path: string, nodeId?: string, direction?: BranchDirection) {
+  const record = session.projects.find(item => item.id === projectId);
+  if (!record) return;
+  if (nodeId) pendingBackgroundCompose.value = { projectId, path, nodeId, direction };
+  emit("openProjectSession", record, path);
+}
+watch(() => [session.activeProjectId, session.current?.session.path] as const, () => {
+  const pending = pendingBackgroundCompose.value;
+  if (!pending || pending.projectId !== session.activeProjectId || pending.path !== session.current?.session.path) return;
+  pendingBackgroundCompose.value = undefined;
+  void nextTick(() => compose(pending.nodeId, pending.direction));
+});
 let orderSequence = 0;
 let draftOrder = 0;
 const emptyDraft = (): ComposerDraft => ({ text: "", images: [], busy: false, readingImages: false, error: "" });
@@ -166,6 +196,74 @@ function nodeContent(id: string) {
   };
 }
 
+function appendBackgroundGraphs(items: RenderNode[], lines: Edge[]) {
+  const board = boards.active;
+  if (!board) return;
+  for (const item of board.sessions ?? []) {
+    if (item.projectId === session.activeProjectId && item.path === session.current?.session.path) continue;
+    const snapshot = boards.snapshots[boardSessionKey(item.projectId, item.path)];
+    const folderIndex = board.projectIds.indexOf(item.projectId);
+    if (folderIndex < 0) continue;
+    const root = boardRootPosition(board, item.projectId, folderIndex);
+    const offset = { x: root.x + 300, y: root.y + Math.max(0, sessionSlot(item.projectId, item.path)) * 470 };
+    const scoped = (id: string) => `board:${JSON.stringify([item.projectId, item.path, id])}`;
+    const anchorId = scoped("session");
+    const running = Boolean(snapshot?.runtime.isStreaming || snapshot?.graph?.runs.some(run => run.status === "running"));
+    const record = session.projects.find(record => record.id === item.projectId);
+    const summary = record?.sessions.find(row => row.path === item.path);
+    items.push({ id: anchorId, type: "board-session", draggable: false, position: offset,
+      data: { projectId: item.projectId, path: item.path,
+        name: snapshot?.session.name || snapshot?.projection.nodes[0]?.title || summary?.name || summary?.firstMessage || summary?.id || item.path,
+        running } });
+    lines.push({ id: scoped("folder"), source: `folder:${item.projectId}`, target: anchorId, class: "folder-edge" });
+    if (!snapshot) continue;
+    const placed = layoutGraph(snapshot.projection, new Map(snapshot.projection.nodes.map(node => [node.id, { width: 320, height: 146 }])));
+    const index = sessionEntryIndex(snapshot.entries);
+    for (const node of placed.nodes) {
+      const original = snapshot.projection.nodes.find(value => value.id === node.id)!;
+      items.push({ id: scoped(node.id), type: "board-prompt", position: board.positions?.[boardNodePositionKey(item.projectId, item.path, node.id)]
+        ?? { x: offset.x + 280 + node.x, y: offset.y + node.y },
+        data: { node: original, projectId: item.projectId, path: item.path, nodeId: node.id,
+          rooted: !original.parentId, active: false, current: false,
+          running: original.running || snapshot.graph?.runs.some(run => run.status === "running" && run.nodeId === node.id),
+          runnable: snapshot.runtime.available && Boolean(record && (!record.project.remote || record.connected)),
+          blockedReason: "graph.blockedReadonly",
+          content: () => {
+            const entries = original.rawEntryIds.flatMap(id => index.get(id) ?? []);
+            const messages = projectSession(entries, original.leafEntryId).messages.filter(message => message.turnId === original.id);
+            return { user: messages.find(message => message.role === "user")?.text ?? original.title,
+              images: messages.find(message => message.role === "user")?.images,
+              assistant: [...messages].reverse().find(message => message.role === "assistant")?.text ?? original.preview };
+          },
+          onCompose: (direction?: BranchDirection) => openBackground(item.projectId, item.path, node.id, direction),
+        } satisfies PromptNodeData & { projectId: string; path: string; nodeId: string } });
+    }
+    for (const edge of snapshot.projection.edges)
+      lines.push({ id: scoped(edge.id), source: scoped(edge.source), target: scoped(edge.target) });
+    const first = snapshot.projection.nodes.find(node => !node.parentId);
+    if (first) lines.push({ id: scoped("root"), source: anchorId, target: scoped(first.id), class: "folder-edge" });
+    let pendingRow = 0;
+    for (const run of snapshot.graph?.runs ?? []) {
+      if (run.status !== "running" || !run.pending || (run.nodeId && snapshot.projection.nodes.some(node => node.id === run.nodeId))) continue;
+      const parent = placed.nodes.find(node => node.id === run.pending?.parentNodeId);
+      const id = scoped(`pending:${run.runId}`);
+      const node: GraphNode = { id, userEntryId: id, parentId: run.pending.parentNodeId,
+        title: clipText(run.pending.text, 58), preview: "", timestamp: "", rawEntryIds: [], leafEntryId: id,
+        toolCallCount: 0, hasError: false, depth: (parent?.depth ?? -1) + 1 };
+      items.push({ id, type: "board-prompt", draggable: false,
+        position: { x: offset.x + 280 + (parent ? parent.x + parent.width + 92 : 0),
+          y: offset.y + (parent?.y ?? 0) + pendingRow++ * 178 },
+        data: { node, projectId: item.projectId, path: item.path, nodeId: id,
+          rooted: !parent, active: true, current: false, running: true, runnable: false,
+          blockedReason: "graph.blockedStreaming",
+          content: () => ({ user: run.pending!.text, images: run.pending!.images, assistant: t("graph.agentRunning") }),
+          onCompose: () => {},
+        } satisfies PromptNodeData & { projectId: string; path: string; nodeId: string } });
+      lines.push({ id: scoped(`pending-edge:${run.runId}`), source: parent ? scoped(parent.id) : anchorId, target: id, animated: true, class: "running-edge" });
+    }
+  }
+}
+
 function rebuild() {
   const value = projection.value;
   if (!value) {
@@ -178,7 +276,12 @@ function rebuild() {
   let restoredSizes: Map<string, Dimensions> | undefined;
   if (activeSession !== sessionKey.value) {
     dragged.clear();
-    restoredLayout = rememberedLayouts.get(sessionKey.value);
+    const savedPositions = new Map<string, ManualPosition>();
+    for (const node of value.nodes) {
+      const saved = boards.active?.positions?.[boardNodePositionKey(session.activeProjectId, session.current?.session.path ?? "", node.id)];
+      if (saved) savedPositions.set(node.id, saved);
+    }
+    restoredLayout = rememberedLayouts.get(sessionKey.value) ?? savedPositions;
     restoredSizes = rememberedDimensions.get(sessionKey.value);
     branchOrder.clear();
     orderSequence = 0;
@@ -250,6 +353,7 @@ function rebuild() {
     position: { x: node.x, y: node.y },
     data: stablePrompt({
       node: value.nodes[index]!,
+      rooted: !node.parentId && Boolean(boards.active?.projectIds.includes(session.activeProjectId)),
       active: active.has(node.id),
       current: value.activeNodeId === node.id,
       runnable: Boolean(session.current?.runtime.available && !busy && node.forkable !== false),
@@ -342,6 +446,7 @@ function rebuild() {
     data: {
       draftState: draftState.value,
       parentId: parent?.id ?? null,
+      rooted: !parent && Boolean(boards.active?.projectIds.includes(session.activeProjectId)),
       runnable: Boolean(session.current?.runtime.available),
       model,
       thinkingLevel,
@@ -362,10 +467,20 @@ function rebuild() {
     },
   } : undefined;
   const nextNodes: RenderNode[] = [...turns, ...(pendingTurn ? [pendingTurn] : []), ...(draft ? [draft] : [])];
+  for (const [index, id] of (boards.active?.projectIds ?? []).entries()) {
+    const record = session.projects.find(item => item.id === id);
+    nextNodes.push({ id: `folder:${id}`, type: "folder", position: boardRootPosition(boards.active, id, index),
+      data: { record, onCreate: () => { if (record) emit("createProjectSession", record); } } });
+  }
   const nextEdges: Edge[] = value.edges.map((edge) => ({
     ...edge,
     class: "",
   }));
+  if (boards.active?.projectIds.includes(session.activeProjectId)) {
+    const first = value.nodes.find(node => !node.parentId)?.id ?? draft?.id;
+    if (first) nextEdges.push({ id: `folder-edge:${session.activeProjectId}`, source: `folder:${session.activeProjectId}`, target: first, class: "folder-edge" });
+  }
+  appendBackgroundGraphs(nextNodes, nextEdges);
   if (pending && pendingParent)
     nextEdges.push({ id: `edge:${pending.message.entryId}`, source: pendingParent.id, target: pending.message.entryId, class: "draft-edge", animated: true });
   if (parent && draft) nextEdges.push({ id: `edge:${draftId}`, source: parent.id, target: draftId, class: "draft-edge", animated: true });
@@ -409,14 +524,14 @@ function rebuild() {
     const previous = previousNodes.get(node.id);
     Object.assign(node, {
       dimensions: existing?.dimensions.width ? existing.dimensions
-        : previous?.dimensions ?? restoredSizes?.get(node.id) ?? (node.type === "draft" ? DRAFT_SIZE : { width: 320, height: 146 }),
+        : previous?.dimensions ?? restoredSizes?.get(node.id) ?? (node.type === "draft" ? DRAFT_SIZE : node.type === "folder" ? { width: 248, height: 126 } : node.type === "board-session" ? { width: 240, height: 60 } : { width: 320, height: 146 }),
       handleBounds: existing?.handleBounds.source?.length ? existing.handleBounds : previous?.handleBounds ?? {
-        source: [{ type: "source", nodeId: node.id, position: "right", x: 316, y: 69, width: 8, height: 8 }],
-        target: [{ type: "target", nodeId: node.id, position: "left", x: -4, y: 69, width: 8, height: 8 }],
+        source: [{ type: "source", nodeId: node.id, position: "right", x: node.type === "folder" ? 244 : node.type === "board-session" ? 236 : 316, y: node.type === "board-session" ? 30 : node.type === "folder" ? 59 : 69, width: 8, height: 8 }],
+        target: [{ type: "target", nodeId: node.id, position: "left", x: -4, y: node.type === "board-session" ? 30 : 69, width: 8, height: 8 }],
       },
     });
   }
-  transientNodeIds = new Set(nextNodes.slice(turns.length).map(node => node.id));
+  transientNodeIds = new Set(nextNodes.slice(turns.length).filter(node => node.type === "prompt" || node.type === "draft").map(node => node.id));
   layoutBranches(nextNodes);
   const stableNodes = nextNodes.map(node => {
     const previous = previousNodes.get(node.id);
@@ -436,7 +551,7 @@ function layoutBranches(items: RenderNode[]) {
   // Runs on every rebuild and resize so settled lanes follow measured card
   // heights; transients reserve vertical space but never widen columns, and a
   // draft's reservation is capped at its opening slot so growth only overlays.
-  const visible = items.filter(node => !(node.type === "draft" && session.pendingPrompt));
+  const visible = items.filter(node => (node.type === "prompt" || node.type === "draft") && !(node.type === "draft" && session.pendingPrompt));
   const depths = new Map(projection.value?.nodes.map(node => [node.id, node.depth]));
   const tree = visible.map(node => node.type === "draft"
     ? { id: node.id, parentId: node.data.parentId, timestamp: "\uffff", depth: (depths.get(node.data.parentId) ?? -1) + 1 }
@@ -448,6 +563,7 @@ function layoutBranches(items: RenderNode[]) {
   const placed = layoutGraph({ nodes: tree }, new Map(visible.map(node => [node.id, node.type === "draft"
     ? { width: node.dimensions!.width, height: DRAFT_SIZE.height }
     : node.dimensions!])), order, transientNodeIds);
+  for (const node of placed.nodes) { node.x += rootOrigin.value.x; node.y += rootOrigin.value.y; }
   // Cards that were not on screen yet may be moved out of a pinned card's way;
   // the ones the user can already see keep the position they have.
   const known = new Set(nodes.value.map(node => node.id));
@@ -663,7 +779,9 @@ async function center(id = defaultFocusId(), ensureReadable = false, animate = t
 async function restoreView() {
   const saved = rememberedViewports.get(sessionKey.value);
   if (!saved) {
-    void center(defaultFocusId(), true);
+    if ((boards.active?.projectIds.length ?? 0) > 1 || (boards.active?.sessions?.length ?? 0) > 1)
+      void fitBoard();
+    else void center(defaultFocusId(), true);
     return;
   }
   // Cancel any in-flight centering so it cannot override the restore. A 1ms
@@ -673,6 +791,15 @@ async function restoreView() {
   await nextTick();
   if (request !== centerRequest || !flow.value) return;
   await flow.value.setViewport(saved, { duration: 1 });
+}
+
+async function fitBoard() {
+  await nextTick();
+  if (!flow.value) return;
+  const focus = defaultFocusId();
+  const ids = nodes.value.filter(node => node.type === "folder" || node.type === "board-session" || node.id === focus)
+    .map(node => node.id);
+  await flow.value.fitView({ nodes: ids, padding: 0.12, maxZoom: 0.9, minZoom: 0.25 });
 }
 
 // The minimap colors nodes by the same running flag the pane cards use.
@@ -752,6 +879,8 @@ async function ready(store: VueFlowStore) {
     // resetting to the active node; first views still center on it.
     const remembered = rememberedViewports.get(sessionKey.value);
     if (remembered) await store.setViewport(remembered);
+    else if ((boards.active?.projectIds.length ?? 0) > 1 || (boards.active?.sessions?.length ?? 0) > 1)
+      await fitBoard();
     else await center(defaultFocusId(), true, false);
   } finally {
     booted.value = true;
@@ -789,6 +918,16 @@ function openChatColumn(id: string) {
 }
 
 function nodeClicked(event: NodeMouseEvent) {
+  if (event.node.type === "board-prompt" || event.node.type === "board-session") {
+    const data = event.node.data as { projectId: string; path: string };
+    openBackground(data.projectId, data.path);
+    return;
+  }
+  if (event.node.type === "folder") {
+    const record = session.projects.find(item => `folder:${item.id}` === event.node.id);
+    if (record) emit("activateProject", record);
+    return;
+  }
   // Any single click, Ctrl held or not, only highlights — the Ctrl gesture
   // for side columns lives on the double-click.
   session.highlightedNode = event.node.id;
@@ -798,6 +937,7 @@ function nodeClicked(event: NodeMouseEvent) {
 // A plain double-click reveals the node in the primary chat panel; holding
 // Ctrl pins it into a side column instead.
 function nodeDoubleClicked(event: NodeMouseEvent) {
+  if (event.node.type === "folder") return nodeClicked(event);
   if (holdsPanelModifier(event)) openChatColumn(event.node.id);
   else void select(event.node.id, true);
 }
@@ -811,9 +951,24 @@ function trackDragModifier(event: NodeMouseEvent) {
 }
 
 function rememberDrag(event: NodeMouseEvent) {
+  if (event.node.type === "folder") {
+    void boards.place(event.node.id.slice(7), event.node.position.x, event.node.position.y)
+      .catch(error => layout.showNotice(String(error), "error"));
+    return;
+  }
+  if (event.node.type === "board-prompt") {
+    const data = event.node.data as { projectId: string; path: string; nodeId: string };
+    void boards.placeNode(data.projectId, data.path, data.nodeId, event.node.position.x, event.node.position.y)
+      .catch(error => layout.showNotice(String(error), "error"));
+    return;
+  }
   const branch = dragFollowsBranch || holdsBranchModifier(event);
   dragFollowsBranch = false;
   dragged.set(event.node.id, { ...event.node.position, branch });
+  if (event.node.type === "prompt" && session.current?.session.path)
+    void boards.placeNode(session.activeProjectId, session.current.session.path, event.node.id,
+      event.node.position.x, event.node.position.y, branch)
+      .catch(error => layout.showNotice(String(error), "error"));
   const node = nodes.value.find(node => node.id === event.node.id);
   if (!node) return;
   node.position = { ...event.node.position };
@@ -845,6 +1000,7 @@ function syncNodeDimensions(changes: NodeChange[]) {
 const pendingRuns = computed(() => JSON.stringify(session.current?.graph?.runs.filter(run => run.pending && run.status === "running") ?? []));
 watch(
   [() => sessionKey.value, () => projection.value?.nodes, () => projection.value?.edges,
+    () => boards.active?.projectIds, () => boards.active?.positions, () => boards.active?.sessions, () => boards.snapshotRevision, () => session.projects,
     () => projection.value?.activeBranchNodeIds, () => projection.value?.activeNodeId,
     () => session.current?.runtime.available, () => !session.current?.graph && session.current?.runtime.isStreaming,
     () => session.models, () => draftParent.value, () => session.pendingPrompt, () => session.deleteBlockedReason, pendingRuns,
@@ -877,6 +1033,10 @@ watch(
 
 <template>
   <main class="panel graph-panel">
+    <div v-if="boards.active" class="board-canvas-title">
+      <strong>{{ boards.active.name }}</strong>
+      <Button variant="ghost" @click="emit('pickProject')"><Plus :size="15" />{{ t('boards.addFolder') }}</Button>
+    </div>
     <div v-if="deleteError || deletionNeedsRecovery" class="graph-delete-error" role="alert">
       {{ t('graph.deleteFailed', { error: deleteError || session.current?.graph?.storageError }) }}
       <Button v-if="deletionNeedsRecovery" data-action="node-delete-recover" variant="outline" :disabled="recoveringDeletion" @click="recoverDeletion">
@@ -916,8 +1076,22 @@ watch(
         <!-- Selection is presentation state; changing it must not call Vue Flow's setNodes. -->
         <PromptNode v-bind="props" :selected="(session.highlightedNode || session.focusedNode) === props.id" />
       </template>
+      <template #node-board-prompt="props">
+        <PromptNode v-bind="props" />
+      </template>
+      <template #node-board-session="props">
+        <div class="board-session-stub" :class="{ running: props.data.running }" :title="props.data.path">
+          <Handle type="target" :position="Position.Left" />
+          {{ props.data.name }}
+          <LoaderCircle v-if="props.data.running" :size="13" class="spin" />
+          <Handle type="source" :position="Position.Right" />
+        </div>
+      </template>
       <template #node-draft="props">
         <DraftNode v-bind="props" />
+      </template>
+      <template #node-folder="props">
+        <FolderNode :id="props.id.slice(7)" :record="props.data.record" :active="props.id === `folder:${session.activeProjectId}`" :session-count="boards.active?.sessions?.filter(item => item.projectId === props.id.slice(7)).length ?? 0" :on-create="props.data.onCreate" />
       </template>
       <MiniMap
         v-if="layout.layout.minimap && nodes.length < 500"

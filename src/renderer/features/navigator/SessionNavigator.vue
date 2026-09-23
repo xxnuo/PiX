@@ -6,10 +6,10 @@ import {
   Folder,
   FolderOpen,
   FolderSync,
+  FolderPlus,
   MoreHorizontal,
   Pin,
   PinOff,
-  Plus,
   RefreshCw,
   Search,
   Settings,
@@ -28,11 +28,13 @@ import {
   DropdownMenuTrigger,
 } from "reka-ui";
 import { useI18n } from "vue-i18n";
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { ProjectGroup } from "../../../shared/types";
 import Button from "../../components/ui/Button.vue";
 import NavigatorMenu from "./NavigatorMenu.vue";
+import BoardList from "./BoardList.vue";
 import { useSessionStore } from "../../stores/session";
+import { useBoardStore } from "../../stores/boards";
 import { useLayoutStore } from "../../stores/layout";
 import { desktop } from "../../api";
 import { relativeTimeUnit } from "../../lib/relative-time";
@@ -45,22 +47,24 @@ const emit = defineEmits<{
   openProjectSession: [record: ProjectGroup, path: string];
   rename: [record: ProjectGroup, path: string, current: string];
   removeProjectSession: [record: ProjectGroup, path: string];
-  forgetProject: [record: ProjectGroup];
   settings: [];
   menuOpenChange: [open: boolean];
 }>();
 const session = useSessionStore();
+const boards = useBoardStore();
 const layout = useLayoutStore();
 const { t } = useI18n();
 const expanded = ref(new Set<string>());
 const collapsed = ref(new Set<string>());
 const previewCount = 5;
+const boardProjects = computed(() => session.filteredProjects.filter(record => boards.active?.projectIds.includes(record.id)));
+const activeFolder = computed(() => boards.active?.projectIds.includes(session.activeProjectId) ?? false);
 
 // Project session lists start collapsed; each one expands on demand and stays
 // in whatever state the user last left it for the rest of the session.
 const seen = new Set<string>();
 watch(
-  () => session.filteredProjects,
+  boardProjects,
   (projects) => {
     const fresh = projects.filter((record) => !seen.has(record.id));
     if (!fresh.length) return;
@@ -119,7 +123,7 @@ async function revealSession(record: ProjectGroup, path: string) {
 <template>
   <aside class="panel navigator-panel">
     <header class="panel-header">
-      <strong>{{ t("nav.projects") }}</strong>
+      <strong>{{ t("boards.title") }}</strong>
       <Button
         data-action="navigator-pin"
         variant="ghost"
@@ -135,14 +139,16 @@ async function revealSession(record: ProjectGroup, path: string) {
       </Button>
     </header>
 
+    <BoardList />
+
     <div class="navigator-actions">
-      <Button class="grow justify-start" variant="ghost" @click="session.create()">
-        <Plus :size="16" />{{ t("nav.newSession") }}
+      <Button class="grow justify-start" variant="ghost" @click="emit('pickProject')">
+        <FolderPlus :size="16" />{{ t("boards.addFolder") }}
       </Button>
-      <Button variant="ghost" size="icon" :title="t('nav.importSession')" @click="emit('importSession')">
+      <Button variant="ghost" size="icon" :title="t('nav.importSession')" :disabled="!activeFolder" @click="emit('importSession')">
         <Upload :size="16" />
       </Button>
-      <Button variant="ghost" size="icon" :title="t('nav.refreshSessions')" @click="session.refresh()">
+      <Button variant="ghost" size="icon" :title="t('nav.refreshSessions')" :disabled="!activeFolder" @click="session.refresh()">
         <RefreshCw :size="16" />
       </Button>
     </div>
@@ -153,7 +159,8 @@ async function revealSession(record: ProjectGroup, path: string) {
     </label>
 
     <nav class="project-list">
-      <section v-for="record in session.filteredProjects" :key="record.id" class="project-group" :data-project-id="record.id">
+      <div class="section-label">{{ t('boards.folders') }}</div>
+      <section v-for="record in boardProjects" :key="record.id" class="project-group" :data-project-id="record.id">
         <div class="project-row" :class="{ active: record.id === session.activeProjectId }">
           <button
             class="project-main"
@@ -177,26 +184,20 @@ async function revealSession(record: ProjectGroup, path: string) {
           <div class="project-actions">
             <NavigatorMenu @open-change="emit('menuOpenChange', $event)">
               <DropdownMenuTrigger as-child>
-                <Button variant="ghost" size="icon" :title="t('nav.projectActions')">
+                <Button variant="ghost" size="icon" :title="t('nav.folderActions')">
                   <MoreHorizontal :size="15" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuPortal>
                 <DropdownMenuContent data-navigator-menu class="menu-content" :side-offset="5">
                   <DropdownMenuItem class="menu-item" @select="emit('activateProject', record)">
-                    {{ t("nav.openProject") }}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem data-action="project-archive" class="menu-item" @select="session.archiveProject(record.id, !record.archived)">
-                    <Archive v-if="!record.archived" :size="14" />
-                    <ArchiveRestore v-else :size="14" />
-                    {{ t(record.archived ? "nav.unarchiveProject" : "nav.archiveProject") }}
+                    {{ t("nav.openFolder") }}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     class="menu-item danger"
-                    :disabled="record.id === session.activeProjectId"
-                    @select="emit('forgetProject', record)"
+                    @select="boards.removeProject(record.id)"
                   >
-                    {{ t("nav.removeFromList") }}
+                    {{ t("boards.removeFolder") }}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenuPortal>
@@ -205,7 +206,7 @@ async function revealSession(record: ProjectGroup, path: string) {
               data-action="create-project-session"
               variant="ghost"
               size="icon"
-              :title="t('nav.newSessionInProject')"
+              :title="t('nav.newSessionInFolder')"
               @click="emit('createProjectSession', record)"
             >
               <SquarePen :size="16" />
@@ -265,6 +266,11 @@ async function revealSession(record: ProjectGroup, path: string) {
                   <ContextMenuItem data-action="session-rename" class="menu-item" @select="emit('rename', record, item.path, item.name ?? '')">
                     {{ t("common.rename") }}
                   </ContextMenuItem>
+                  <ContextMenuItem v-if="boards.active?.sessions?.some(open => open.projectId === record.id && open.path === item.path)"
+                    data-action="session-remove-from-board" class="menu-item board-menu-item"
+                    @select="boards.detachSession(record.id, item.path).catch(error => layout.showNotice(String(error), 'error'))">
+                    <span><strong>{{ t("boards.removeSession") }}</strong><small>{{ t("boards.removeSessionDescription") }}</small></span>
+                  </ContextMenuItem>
                   <ContextMenuItem data-action="session-archive" class="menu-item" @select="session.archiveSession(item.path, !item.archived)">
                     <Archive v-if="!item.archived" :size="14" />
                     <ArchiveRestore v-else :size="14" />
@@ -288,7 +294,7 @@ async function revealSession(record: ProjectGroup, path: string) {
           <p v-if="!record.sessions.length" class="project-empty">{{ t("nav.noSessions") }}</p>
         </div>
       </section>
-      <p v-if="!session.filteredProjects.length" class="empty-copy">{{ t("nav.noProjects") }}</p>
+      <p v-if="!boardProjects.length" class="empty-copy">{{ t("boards.noFolders") }}</p>
     </nav>
 
     <footer class="navigator-footer">

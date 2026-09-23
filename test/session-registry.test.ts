@@ -42,6 +42,23 @@ async function until(check: () => boolean) {
 // every path the tests assert against would diverge from the registry's.
 const workspace = () => realpathSync(mkdtempSync(join(tmpdir(), "pix-registry-ws-")));
 
+test("inspecting another board session preserves the selected session", async () => {
+  const project = { name: "one", path: "/one" };
+  const registry = new SessionRegistry({
+    createRuntime: entry => ({ open: async () => {}, close: async () => {}, busy: false,
+      snapshot: () => ({ session: { path: entry.path }, entries: [], projection: { nodes: [] } }),
+    }) as never,
+    onEvent: () => {},
+  });
+  try {
+    await registry.open(project, null, "a.jsonl");
+    const inspected = await registry.inspect(project, null, "b.jsonl");
+    assert.equal(inspected.session.path, "b.jsonl");
+    assert.equal(registry.activeOf(projectId(project))?.path, "a.jsonl");
+    assert.ok(registry.entry("b.jsonl"));
+  } finally { await registry.disposeAll(); }
+});
+
 test("late local opens keep the latest selection, including a project switch", async () => {
   const ws = workspace(), other = workspace();
   const controller = new MainController(ws, platform);

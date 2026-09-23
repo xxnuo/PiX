@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { ChevronDown, Folder, MessageSquare, MonitorUp, PanelLeft, PanelRight, Pin, Unplug } from "@lucide/vue";
-import { ref } from "vue";
+import { ChevronDown, Folder, LayoutDashboard, MessageSquare, MonitorUp, PanelLeft, PanelRight, Pin, Unplug } from "@lucide/vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import Button from "../../components/ui/Button.vue";
 import GitBranchPicker from "../../components/GitBranchPicker.vue";
 import { useLayoutStore } from "../../stores/layout";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { useBoardStore } from "../../stores/boards";
 import { formatShortcut, shortcutBindings, type ShortcutId } from "../../../shared/shortcuts";
 import { isMac } from "../../keyboard-shortcuts";
+import { projectId } from "../../../shared/types";
 
 const emit = defineEmits<{ pickProject: []; connectRemote: []; disconnectRemote: [] }>();
 
 const layout = useLayoutStore();
 const workspace = useWorkspaceStore();
+const boards = useBoardStore();
 const { t } = useI18n();
 const workspaceMenuOpen = ref(false);
+const visibleProject = computed(() => workspace.project && boards.active?.projectIds.includes(projectId(workspace.project))
+  ? workspace.project : undefined);
 function shortcutTitle(label: string, id: ShortcutId) {
   const keys = shortcutBindings(id, layout.settings?.app.keyboardShortcuts).map((binding) => formatShortcut(binding, isMac())).join(" / ");
   return keys ? `${t(label)} (${keys})` : t(label);
@@ -63,14 +68,13 @@ function disconnectRemote() {
         class="app-titlebar-project"
         data-action="workspace-picker"
         type="button"
-        :title="workspace.project?.path"
+        :title="boards.active?.name"
         :aria-expanded="workspaceMenuOpen"
         @click="workspaceMenuOpen = !workspaceMenuOpen"
       >
-        <Folder :size="16" />
-        <span>{{ workspace.project?.name ?? t("titlebar.chooseWorkspace") }}</span>
-        <em v-if="workspace.project?.remote?.kind === 'wsl'">WSL · {{ workspace.project.remote.distro }}</em>
-        <em v-else-if="workspace.project?.remote?.kind === 'ssh'">SSH · {{ workspace.project.remote.host }}</em>
+        <LayoutDashboard :size="16" />
+        <span>{{ boards.active?.name ?? t("titlebar.chooseBoard") }}</span>
+        <em v-if="visibleProject">{{ visibleProject.name }}</em>
         <ChevronDown class="app-titlebar-project-chevron" :size="14" />
       </button>
 
@@ -83,10 +87,10 @@ function disconnectRemote() {
       />
       <div v-if="workspaceMenuOpen" class="workspace-picker" data-workspace-picker role="menu">
         <div class="workspace-picker-current">
-          <Folder :size="18" />
+          <LayoutDashboard :size="18" />
           <div>
-            <strong>{{ workspace.project?.name ?? t("titlebar.noWorkspace") }}</strong>
-            <span>{{ workspace.project?.path ?? t("titlebar.chooseHint") }}</span>
+            <strong>{{ boards.active?.name ?? t("titlebar.chooseBoard") }}</strong>
+            <span>{{ visibleProject?.path ?? t("titlebar.chooseHint") }}</span>
           </div>
         </div>
         <div class="workspace-picker-options">
@@ -96,11 +100,11 @@ function disconnectRemote() {
           </button>
           <button data-action="connect-wsl" type="button" role="menuitem" @click="chooseRemote">
             <MonitorUp :size="18" />
-            <span><strong>{{ workspace.project?.remote ? t("titlebar.changeRemote") : t("titlebar.remoteWorkspace") }}</strong><small>{{ t("titlebar.remoteHint") }}</small></span>
+            <span><strong>{{ visibleProject?.remote ? t("titlebar.changeRemote") : t("titlebar.remoteWorkspace") }}</strong><small>{{ t("titlebar.remoteHint") }}</small></span>
           </button>
         </div>
         <button
-          v-if="workspace.project?.remote"
+          v-if="visibleProject?.remote"
           class="workspace-picker-disconnect"
           data-action="disconnect-wsl"
           type="button"
@@ -108,14 +112,14 @@ function disconnectRemote() {
           @click="disconnectRemote"
         >
           <Unplug :size="16" />
-          {{ t("titlebar.disconnect", { kind: workspace.project.remote.kind.toUpperCase() }) }}
+          {{ t("titlebar.disconnect", { kind: visibleProject.remote.kind.toUpperCase() }) }}
         </button>
       </div>
     </div>
 
     <div class="app-titlebar-side app-titlebar-right">
       <template v-if="layout.screen === 'workbench'">
-        <GitBranchPicker />
+        <GitBranchPicker v-if="visibleProject" />
         <Button
           data-action="chat-panel"
           :class="!layout.layout.collapsed.chat ? 'active' : ''"

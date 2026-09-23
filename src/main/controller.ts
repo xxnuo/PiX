@@ -4,6 +4,7 @@ import { basename, dirname, join, posix, resolve } from "node:path";
 import { debugLog, logFile } from "./debug-log.js";
 import type {
   AgentControl,
+  BoardState,
   DesktopEvent,
   DesktopRoute,
   LayoutState,
@@ -159,6 +160,7 @@ export class MainController {
       if (pushed.type === "sessions") {
         const current = (pushed.payload as { current?: SessionSnapshot })?.current;
         if (current && !this.registry.isActive(entry)) {
+          this.emit({ type: "board.snapshot", payload: { projectId: projectId(entry.project), snapshot: current } });
           // A background session settled: refresh history and the list, never the view.
           this.progress.noteEpoch(current);
           this.scheduleBackgroundRefresh(entry);
@@ -206,6 +208,7 @@ export class MainController {
           this.current = snapshot;
           this.emit({ type: "sessions", payload: { current: snapshot } });
         } else {
+          this.emit({ type: "board.snapshot", payload: { projectId: projectId(entry.project), snapshot } });
           this.scheduleBackgroundRefresh(entry);
         }
       } catch (e) { debugLog("controller: live snapshot refresh", e); }
@@ -494,6 +497,23 @@ export class MainController {
   }
   async invoke(route: DesktopRoute, raw?: unknown): Promise<unknown> {
     const v = validateRouteInput(route, raw);
+    if (route === "board.state") return this.settings.boardState();
+    if (route === "board.save") return this.settings.saveBoardState(v.state as BoardState);
+    if (route === "session.inspect") {
+      const id = String(v.projectId || (this.project ? projectId(this.project) : ""));
+      const record = this.settings.projectHistory().find(item => item.id === id);
+      const project = record?.project ?? (this.project && projectId(this.project) === id ? this.project : null);
+      if (!project) throw new Error("Folder is not available");
+      if (project.remote) {
+        const slot = this.pool.slot(id);
+        if (!slot?.client.connected) throw new Error("Remote host is not connected");
+        return slot.client.request("session.inspect", { path: v.path });
+      }
+      const dir = configuredSessionDir(project.path, this.settings.bundle());
+      const files = new SessionFiles(project.path, dir);
+      const path = files.managed(String(v.path));
+      return this.registry.inspect(project, files.dir, path);
+    }
     const request = ["session.open", "remote.disconnect", "wsl.disconnect"].includes(route) || (route === "agent.control" && v.action === "newSession")
       ? ++this.viewRequest : this.viewRequest;
     if (route === "app.revealSession") {

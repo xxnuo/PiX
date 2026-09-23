@@ -10,11 +10,13 @@ import type { PanelId } from "../../../shared/types";
 import type { ProjectGroup } from "../../../shared/types";
 import BranchContextPanel from "../branch-context/BranchContextPanel.vue";
 import GraphPanel from "../graph/GraphPanel.vue";
+import BoardCanvas from "../graph/BoardCanvas.vue";
 import SessionNavigator from "../navigator/SessionNavigator.vue";
 import ToolPanel from "../tools/ToolPanel.vue";
 import { whenMeasured, whenPanelsSettle, whenVisible, type PanelSettleTarget } from "../../lib/frame";
 import { useLayoutStore } from "../../stores/layout";
 import { useSessionStore } from "../../stores/session";
+import { useBoardStore } from "../../stores/boards";
 
 const emit = defineEmits<{
   settings: [];
@@ -26,12 +28,12 @@ const emit = defineEmits<{
   openProjectSession: [record: ProjectGroup, path: string];
   rename: [record: ProjectGroup, path: string, current: string];
   removeProjectSession: [record: ProjectGroup, path: string];
-  forgetProject: [record: ProjectGroup];
 }>();
 
 type PanelHandle = { collapse: () => void; expand: () => void; resize: (size: number) => void };
 const layout = useLayoutStore();
 const session = useSessionStore();
+const boards = useBoardStore();
 const { t } = useI18n();
 const shell = ref<HTMLElement>();
 const navigatorElement = ref<HTMLElement>();
@@ -264,7 +266,6 @@ watch(() => layout.hydrated, async (hydrated) => {
           @open-project-session="openProjectSession"
           @rename="renameSession"
           @remove-project-session="removeProjectSession"
-          @forget-project="emit('forgetProject', $event)"
           @settings="$emit('settings')"
         />
         <div
@@ -288,7 +289,8 @@ watch(() => layout.hydrated, async (hydrated) => {
       <SplitterPanel id="primary-panels" :order="1">
         <SplitterGroup id="pix-primary" direction="horizontal" class="workbench-splitter">
           <SplitterPanel id="graph-panel" :order="2" :min-size="24">
-            <GraphPanel class="graph" @new-session="$emit('newSession')" />
+            <BoardCanvas v-if="!session.current || !boards.active?.sessions?.some(item => item.projectId === session.activeProjectId && item.path === session.current?.session.path)" class="graph" @pick-project="$emit('pickProject')" @activate-project="emit('activateProject', $event)" @create-project-session="emit('createProjectSession', $event)" @open-project-session="(record, path) => emit('openProjectSession', record, path)" />
+            <GraphPanel v-else class="graph" @new-session="$emit('newSession')" @pick-project="$emit('pickProject')" @activate-project="emit('activateProject', $event)" @create-project-session="emit('createProjectSession', $event)" @open-project-session="(record, path) => emit('openProjectSession', record, path)" />
           </SplitterPanel>
           <SplitterResizeHandle class="resize-handle" :class="{ hidden: layout.layout.collapsed.chat }" />
 
@@ -307,7 +309,7 @@ watch(() => layout.hydrated, async (hydrated) => {
             @collapse="panelState('chat', true)"
             @expand="panelState('chat', false)"
           >
-            <div class="chat-columns">
+            <div v-if="session.current && boards.active?.sessions?.some(item => item.projectId === session.activeProjectId && item.path === session.current?.session.path)" class="chat-columns">
               <BranchContextPanel class="chat" />
               <BranchContextPanel
                 v-for="id in layout.chatColumns"
@@ -316,6 +318,7 @@ watch(() => layout.hydrated, async (hydrated) => {
                 class="chat"
               />
             </div>
+            <div v-else class="board-panel-empty">{{ t('boards.selectSession') }}</div>
           </SplitterPanel>
         </SplitterGroup>
       </SplitterPanel>
@@ -336,7 +339,8 @@ watch(() => layout.hydrated, async (hydrated) => {
         @collapse="panelState('content', true)"
         @expand="panelState('content', false)"
       >
-        <ToolPanel class="content" />
+        <ToolPanel v-if="boards.active?.projectIds.includes(session.activeProjectId)" class="content" />
+        <div v-else class="board-panel-empty">{{ t('boards.selectFolderFirst') }}</div>
       </SplitterPanel>
     </SplitterGroup>
   </div>

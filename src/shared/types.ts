@@ -47,6 +47,23 @@ export interface ProjectGroup extends ProjectHistory {
   /** True when the user archived this project out of the navigator. */
   archived?: boolean;
 }
+export interface Board {
+  id: string;
+  name: string;
+  groupId: string | null;
+  projectIds: string[];
+  positions?: Record<string, { x: number; y: number; branch?: boolean }>;
+  sessions?: Array<{ projectId: string; path: string }>;
+}
+export interface BoardGroup {
+  id: string;
+  name: string;
+}
+export interface BoardState {
+  boards: Board[];
+  groups: BoardGroup[];
+  activeBoardId: string;
+}
 export function projectId(project: ProjectInfo) {
   const remote = project.remote;
   return remote
@@ -502,6 +519,8 @@ export type AgentControl =
   | { action: "navigateTree" | "fork"; entryId: string };
 export type DesktopRoute =
   | "app.bootstrap"
+  | "board.state"
+  | "board.save"
   | "app.pickProject"
   | "app.openProject"
   | "app.revealLogs"
@@ -521,6 +540,7 @@ export type DesktopRoute =
   | "remote.openProject"
   | "session.list"
   | "session.snapshot"
+  | "session.inspect"
   | "session.open"
   | "session.stop"
   | "session.import"
@@ -552,7 +572,7 @@ export type DesktopRoute =
   | "settings.reset"
   | "layout.save";
 export interface DesktopEvent {
-  type: "agent" | "shell" | "terminal" | "sessions" | "notice" | "remote.progress" | "remote.connection" | "update.available";
+  type: "agent" | "shell" | "terminal" | "sessions" | "board.snapshot" | "notice" | "remote.progress" | "remote.connection" | "update.available";
   payload: unknown;
 }
 export type RemoteConnectStage = "checking" | "runtime" | "upload" | "install" | "starting" | "handshake" | "loading";

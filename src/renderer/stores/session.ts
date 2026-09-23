@@ -20,6 +20,7 @@ import { i18n } from "../i18n";
 import { track, trackEvent } from "../experimental/history";
 import { useLayoutStore } from "./layout";
 import { useWorkspaceStore } from "./workspace";
+import { useBoardStore } from "./boards";
 import { createBranchMessageCache, reuseGraphProjection } from "../lib/session-view";
 
 // Display name for a session row, falling back to the raw path when the
@@ -244,6 +245,7 @@ export const useSessionStore = defineStore("session", {
       snapshot.entries = markRaw(snapshot.entries);
       snapshot.projection = markRaw(snapshot.projection);
       this.current = snapshot;
+      useBoardStore().capture(this.activeProjectId, snapshot);
       if (snapshot.session.path)
         this.sessions = [
           { ...snapshot.session, running: isSessionRunning(snapshot) || undefined },
@@ -342,6 +344,8 @@ export const useSessionStore = defineStore("session", {
         const snapshot = await desktop.invoke<SessionSnapshot>("session.open", { path });
         if (request !== this.viewRequest) return;
         this.applySnapshot(snapshot);
+        await useBoardStore().addSession(this.activeProjectId, snapshot.session.path);
+        useBoardStore().capture(this.activeProjectId, snapshot);
         this.focusedNode = snapshot.projection.activeNodeId;
         if (snapshot.runtime.isStreaming || snapshot.graph?.runs.some(run => run.status === "running")) {
           // Switching back mid-run: the snapshot resync replays the session's
@@ -373,9 +377,17 @@ export const useSessionStore = defineStore("session", {
       const abortLabel = this.abortLabel(input);
       const sendLabel = this.sendPromptLabel(input);
       const result = await desktop.invoke<T>("agent.control", input);
-      if (request === this.viewRequest && project === this.activeProjectId && path === this.current?.session.path
-        && result && typeof result === "object" && "projection" in result)
-        this.applySnapshot(result as unknown as SessionSnapshot);
+      if (request === this.viewRequest && project === this.activeProjectId
+        && result && typeof result === "object" && "projection" in result) {
+        const snapshot = result as unknown as SessionSnapshot;
+        const migrated = ["fork", "clone"].includes(String(input.action)) && snapshot.session.path !== path;
+        if (migrated) {
+          await useBoardStore().addSession(project, snapshot.session.path);
+          useBoardStore().capture(project, snapshot);
+        }
+        if (path === this.current?.session.path || (migrated && snapshot.session.path === this.current?.session.path))
+          this.applySnapshot(snapshot);
+      }
       if (abortLabel) trackEvent({ kind: "abortRun", label: abortLabel });
       if (sendLabel) trackEvent({ kind: "sendPrompt", label: sendLabel });
       return result;
@@ -567,9 +579,10 @@ export const useSessionStore = defineStore("session", {
       });
     },
     async applyCreate(): Promise<SessionSnapshot | null> {
-      if (!useWorkspaceStore().project) {
+      const boards = useBoardStore();
+      if (!useWorkspaceStore().project || (boards.state && !boards.active?.projectIds.includes(this.activeProjectId))) {
         useLayoutStore().showNotice(
-          i18n.global.t("notice.openProjectFirst"),
+          i18n.global.t("boards.selectFolderFirst"),
           "warning",
         );
         return null;
@@ -582,11 +595,16 @@ export const useSessionStore = defineStore("session", {
       // still be in flight: without adopting it here the list and slash commands
       // would keep serving the session that was just replaced.
       if (snapshot.session.path !== this.current?.session.path) this.applySnapshot(snapshot);
+      await useBoardStore().addSession(this.activeProjectId, snapshot.session.path);
+      useBoardStore().capture(this.activeProjectId, snapshot);
       this.focusedNode = this.current?.projection.activeNodeId ?? null;
       await Promise.all([this.refresh(), this.loadCommands()]);
       return snapshot;
     },
     async importSession(path?: string) {
+      const boards = useBoardStore();
+      if (boards.state && !boards.active?.projectIds.includes(this.activeProjectId))
+        throw new Error(i18n.global.t("boards.selectFolderFirst"));
       const result = await desktop.invoke<{ imported?: string; sessions: SessionSummary[] } | null>(
         "session.import",
         path ? { path } : {},
@@ -625,6 +643,8 @@ export const useSessionStore = defineStore("session", {
     },
     applyDeletion(path: string, sessions: SessionSummary[]) {
       this.sessions = sessions;
+      const saved = useBoardStore().removeSession(this.activeProjectId, path);
+      void saved.catch(error => useLayoutStore().showNotice(String(error), "error"));
       if (this.current?.session.path === path) {
         this.current = undefined;
         this.focusedNode = null;
@@ -635,13 +655,14 @@ export const useSessionStore = defineStore("session", {
         this.commands = [];
       }
       this.syncProject();
+      return saved;
     },
     async remove(path: string, confirmed = false) {
       const target = this.sessions.find((session) => session.path === path);
       const labelName = target ? displayName(target) : path;
       const result = await desktop.invoke<{ sessions: SessionSummary[]; cancelled?: boolean }>("session.delete", confirmed ? { path, confirmed } : { path });
       if (!result.cancelled) {
-        this.applyDeletion(path, result.sessions);
+        await this.applyDeletion(path, result.sessions);
         trackEvent({ kind: "deleteSession", label: i18n.global.t("history.deleteSession", { name: labelName }) });
       }
     },

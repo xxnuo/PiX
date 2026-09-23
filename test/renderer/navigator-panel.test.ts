@@ -11,6 +11,7 @@ import { useLayoutStore } from "../../src/renderer/stores/layout";
 import { i18n } from "../../src/renderer/i18n";
 
 vi.mock("../../src/renderer/features/graph/GraphPanel.vue", () => ({ default: { template: '<div class="graph-test" tabindex="0" />' } }));
+vi.mock("../../src/renderer/features/graph/BoardCanvas.vue", () => ({ default: { template: '<div class="graph-test" tabindex="0" />' } }));
 vi.mock("../../src/renderer/features/branch-context/BranchContextPanel.vue", () => ({ default: { template: '<div />' } }));
 vi.mock("../../src/renderer/features/tools/ToolPanel.vue", () => ({ default: { template: '<div />' } }));
 

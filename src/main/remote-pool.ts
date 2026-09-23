@@ -125,6 +125,8 @@ export class RemoteWorkspacePool {
         !record.project.remote && sameHostPath(record.project.path, project.path))?.sessions;
       if (sessions) this.host.rememberProject(sessions, project);
       if (payload.current) this.host.rememberSnapshot(project, payload.current);
+      if (payload.current && (!active || payload.current.session.path !== slot.activePath))
+        this.host.emit({ type: "board.snapshot", payload: { projectId: projectId(project), snapshot: payload.current } });
       if (sessions || payload.current)
         this.host.emit({ type: "sessions", payload: { projects: this.host.projectGroups() } });
       if (!active) return;

@@ -117,7 +117,11 @@ export class SessionRegistry {
     return this.load(project, dir, path, ++this.selection, fallback);
   }
 
-  private async load(project: ProjectInfo, dir: string | null, path: string, selection: number,
+  inspect(project: ProjectInfo, dir: string | null, path: string): Promise<SessionSnapshot> {
+    return this.load(project, dir, path, undefined);
+  }
+
+  private async load(project: ProjectInfo, dir: string | null, path: string, selection: number | undefined,
     fallback?: (error: unknown) => SessionSnapshot): Promise<SessionSnapshot> {
     const owner = projectId(project);
     if (this.blockedPaths.has(path) || this.blockedProjects.has(owner))
@@ -128,7 +132,7 @@ export class SessionRegistry {
       try {
         const snapshot = settled.runtime.snapshot();
         settled.lastUsed = Date.now();
-        if (selection === this.selection) this.setActive(settled);
+        if (selection !== undefined && selection === this.selection) this.setActive(settled);
         return snapshot;
       } catch {
         // The cached runtime died underneath us; reopen so the caller gets a
@@ -164,7 +168,7 @@ export class SessionRegistry {
       if (!this.settled.has(path))
         this.settled.set(path, { path, project, dir, lastUsed: Date.now(), fallback: fallback(error) });
       const failed = this.settled.get(path)!;
-      if (selection === this.selection) this.setActive(failed);
+      if (selection !== undefined && selection === this.selection) this.setActive(failed);
       // A concurrent open can win this path while ours is failing; serve its
       // snapshot instead of the missing fallback of a superseded entry. Going
       // through snapshotOf keeps a winner whose runtime died underneath us on
@@ -184,7 +188,7 @@ export class SessionRegistry {
     if (this.settled.get(path) !== entry
       || this.blockedPaths.has(path) || this.blockedProjects.has(projectId(entry.project)))
       throw new Error("Session was closed while opening");
-    if (selection === this.selection) this.setActive(entry);
+    if (selection !== undefined && selection === this.selection) this.setActive(entry);
     const snapshot = entry.runtime!.snapshot();
     void this.evict().catch(e => debugLog("session-registry: evict on open", e));
     return snapshot;

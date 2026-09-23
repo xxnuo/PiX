@@ -5,6 +5,7 @@ import type { ProjectGroup } from "../../src/shared/types";
 import SessionNavigator from "../../src/renderer/features/navigator/SessionNavigator.vue";
 import { i18n } from "../../src/renderer/i18n";
 import { useSessionStore } from "../../src/renderer/stores/session";
+import { useBoardStore } from "../../src/renderer/stores/boards";
 
 const groups: ProjectGroup[] = [
   {
@@ -64,6 +65,7 @@ describe("session navigator remote projects", () => {
       groups[1]!.sessions,
       JSON.parse(JSON.stringify(groups)),
     );
+    useBoardStore().state = { boards: [{ id: "board", name: "Board", groupId: null, projectIds: groups.map(group => group.id) }], groups: [], activeBoardId: "board" };
   });
 
   function mountNavigator() {
