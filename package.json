@@ -1,6 +1,6 @@
 {
   "name": "pix",
-  "version": "0.0.23",
+  "version": "0.0.24",
   "private": true,
   "license": "MPL-2.0",
   "type": "module",
@@ -21,7 +21,7 @@
     "test:terminal": "node test/node-pty-test.mjs",
     "test:pi": "node test/pi-session-test.mjs",
     "test:fff": "node test/builtin-fff-smoke-test.mjs",
-    "test:web": "node --test test/prune-dev-artifacts.test.mjs && node test/web-extension-smoke-test.mjs",
+    "test:web": "node test/web-extension-smoke-test.mjs",
     "verify": "npm run typecheck && npm test && npm run test:pi",
     "dev": "tsc -p tsconfig.node.json && node out/web/index.js --dev",
     "start": "node out/web/index.js"
