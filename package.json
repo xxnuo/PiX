@@ -1,6 +1,6 @@
 {
   "name": "pix",
-  "version": "0.0.24",
+  "version": "0.0.26",
   "private": true,
   "license": "MPL-2.0",
   "type": "module",
@@ -27,9 +27,8 @@
     "start": "node out/web/index.js"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.87.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
-    "@earendil-works/pi-server": "0.87.1",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@lucide/vue": "^1.39.0",
     "@vue-flow/core": "^1.48.2",
     "@vue-flow/minimap": "^1.5.4",
