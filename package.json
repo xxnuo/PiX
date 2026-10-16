@@ -1,6 +1,6 @@
 {
   "name": "pix",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "private": true,
   "license": "MPL-2.0",
   "type": "module",
@@ -14,12 +14,14 @@
     "build:server": "tsc -p tsconfig.server.json",
     "install:server:wsl": "node scripts/install-wsl-server.mjs",
     "test:wsl": "node scripts/install-wsl-server.mjs && node scripts/clean-test-out.mjs && tsc -p tsconfig.test.json && node test/wsl-server-test.mjs",
+    "test:wsl:upgrade": "npm run build:server && node test/wsl-upgrade-test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.app.json",
     "build": "npm run build:server && tsc -p tsconfig.node.json && vite build",
     "test": "node scripts/clean-test-out.mjs && tsc -p tsconfig.test.json && node --test out-test/test/*.test.js && npm run test:renderer && npm run test:terminal",
     "test:renderer": "vitest run --config vitest.config.ts",
     "test:terminal": "node test/node-pty-test.mjs",
     "test:pi": "node test/pi-session-test.mjs",
+    "test:gui:chat-switch": "npm run build && node test/gui-session-chat-switch.mjs",
     "test:fff": "node test/builtin-fff-smoke-test.mjs",
     "test:web": "node test/web-extension-smoke-test.mjs",
     "verify": "npm run typecheck && npm test && npm run test:pi",
@@ -27,8 +29,8 @@
     "start": "node out/web/index.js"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.0.0",
-    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
     "@lucide/vue": "^1.39.0",
     "@vue-flow/core": "^1.48.2",
     "@vue-flow/minimap": "^1.5.4",
