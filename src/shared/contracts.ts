@@ -5,6 +5,7 @@ import type {
   PanelId,
 } from "./types.js";
 import { CUSTOM_MODEL_APIS, PANEL_IDS, UTILITY_TABS } from "./types.js";
+import { validateBoardState } from "./boards.js";
 import { INSTALLABLE_PACKAGE_SOURCES } from "./extensions.js";
 import { validatePromptImages } from "./images.js";
 import { MAX_SKILL_BYTES } from "./skills.js";
@@ -142,6 +143,12 @@ export function validateRouteInput(
       return {};
     case "ui.respond":
       return { id: str(v.id, "id"), value: str(v.value, "value", true), projectId: str(v.projectId, "projectId", true) };
+    case "board.state":
+      return {};
+    case "board.save":
+      return { state: validateBoardState(v.state) };
+    case "session.inspect":
+      return { path: str(v.path, "path"), projectId: str(v.projectId, "projectId", true) };
     case "wsl.connect":
       return {
         distro: str(v.distro, "distro"),

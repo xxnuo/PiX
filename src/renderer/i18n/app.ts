@@ -1,6 +1,17 @@
 import { acceptDomainUpdate } from "./registry";
 
 export const en = {
+  boards: {
+    fit: "Show the whole canvas",
+    title: "Boards", new: "New board", newGroup: "New folder", addFolder: "Open folder on board",
+    folders: "Open folders", noFolders: "Open a folder to start on this board.",
+    actions: "Board actions", groupActions: "Folder actions", rename: "Rename board", renameGroup: "Rename folder",
+    moveTo: "Move to {name}", ungroup: "Remove folder grouping", delete: "Delete board",
+    removeFolder: "Remove from board", missingFolder: "Folder unavailable", sessionCount: "{n} sessions",
+    removeSession: "Remove from board",
+    removeSessionDescription: "Keep the session file and history; remove its graph from this board.",
+    selectFolderFirst: "Select a folder on this board first.", selectSession: "Select or start a session from a folder on this board.",
+  },
   fileChanges: {
     oldLine: "Original line {n}", newLine: "Updated line {n}",
     count: "1 file changed | {n} files changed", review: "review", more: "Show more lines",
@@ -157,6 +168,17 @@ export const en = {
 };
 
 export const zhCN: typeof en = {
+  boards: {
+    fit: "显示整个画布",
+    title: "画板", new: "新建画板", newGroup: "新建分组文件夹", addFolder: "在画板上打开文件夹",
+    folders: "已打开的文件夹", noFolders: "打开文件夹，在此画板上创建起始点。",
+    actions: "画板操作", groupActions: "分组文件夹操作", rename: "重命名画板", renameGroup: "重命名分组文件夹",
+    moveTo: "移至「{name}」", ungroup: "取消文件夹分组", delete: "删除画板",
+    removeFolder: "从画板移除", missingFolder: "文件夹不可用", sessionCount: "{n} 个会话",
+    removeSession: "从画板移除",
+    removeSessionDescription: "保留会话文件和历史记录，只从当前画板移除会话图。",
+    selectFolderFirst: "请先选择此画板上的文件夹。", selectSession: "从此画板的文件夹中选择或新建会话。",
+  },
   fileChanges: {
     oldLine: "修改前第 {n} 行", newLine: "修改后第 {n} 行",
     count: "{n} 个文件已更改", review: "审查", more: "显示更多行",

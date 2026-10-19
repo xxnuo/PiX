@@ -4,6 +4,7 @@ import { basename, dirname, join, posix, resolve } from "node:path";
 import { debugLog, logFile } from "./debug-log.js";
 import type {
   AgentControl,
+  BoardState,
   DesktopEvent,
   DesktopRoute,
   LayoutState,
@@ -171,6 +172,7 @@ export class MainController {
       if (pushed.type === "sessions") {
         const current = (pushed.payload as { current?: SessionSnapshot })?.current;
         if (current && !this.registry.isActive(entry)) {
+          this.emit({ type: "board.snapshot", payload: { projectId: projectId(entry.project), snapshot: current } });
           // A background session settled: refresh history and the list, never the view.
           this.progress.noteEpoch(current);
           this.scheduleBackgroundRefresh(entry);
@@ -218,6 +220,7 @@ export class MainController {
           this.current = snapshot;
           this.emit({ type: "sessions", payload: { current: snapshot } });
         } else {
+          this.emit({ type: "board.snapshot", payload: { projectId: projectId(entry.project), snapshot } });
           this.scheduleBackgroundRefresh(entry);
         }
       } catch (e) { debugLog("controller: live snapshot refresh", e); }
@@ -578,6 +581,23 @@ export class MainController {
       return this.dialogs.respond(String(v.id), v.value as string | undefined);
     }
     if (route === "ui.pending") return [...this.dialogs.list(), ...await this.pool.pendingDialogs()];
+    if (route === "board.state") return this.settings.boardState();
+    if (route === "board.save") return this.settings.saveBoardState(v.state as BoardState);
+    if (route === "session.inspect") {
+      const id = String(v.projectId || (this.project ? projectId(this.project) : ""));
+      const record = this.settings.projectHistory().find(item => item.id === id);
+      const project = record?.project ?? (this.project && projectId(this.project) === id ? this.project : null);
+      if (!project) throw new Error("Folder is not available");
+      if (project.remote) {
+        const slot = this.pool.slot(id);
+        if (!slot?.client.connected) throw new Error("Remote host is not connected");
+        return slot.client.request("session.inspect", { path: v.path });
+      }
+      const dir = configuredSessionDir(project.path, this.settings.bundle());
+      const files = new SessionFiles(project.path, dir);
+      const path = files.managed(String(v.path));
+      return this.registry.inspect(project, files.dir, path);
+    }
     const request = ["session.open", "remote.disconnect", "wsl.disconnect"].includes(route) || (route === "agent.control" && v.action === "newSession")
       ? ++this.viewRequest : this.viewRequest;
     if (route === "app.revealSession") {
@@ -873,7 +893,10 @@ export class MainController {
         // settlement would otherwise resurrect the deleted session — and the
         // unlink runs inside the blocked window so no new open can build a
         // runtime between the close and the missing file.
+        const owner = resolved?.entry.project ?? this.project!;
         await this.registry.dispose(p, () => this.files.deleteAt(p));
+        this.settings.forgetBoardSession(projectId(owner), p);
+        if (p !== String(v.path)) this.settings.forgetBoardSession(projectId(owner), String(v.path));
         // A racing open can have settled the view during the drain; capture
         // the viewed path only now so that view still clears.
         const currentPath = this.current?.session.path;

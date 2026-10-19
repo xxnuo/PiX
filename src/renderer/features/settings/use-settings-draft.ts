@@ -122,6 +122,7 @@ export function useSettingsDraft(outputStyleSkills?: Ref<string[]>) {
         ];
       case "experimental":
         return [
+          { path: "experimentalCanvas", label: "settings.rows.experimentalCanvas", scope: "app", type: "check", fallback: false, description: "settings.rows.experimentalCanvasDesc" },
           { path: "experimentalHistory", label: "settings.rows.experimentalHistory", scope: "app", type: "check", fallback: false, description: "settings.rows.experimentalHistoryDesc" },
         ];
       case "agent":

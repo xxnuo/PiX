@@ -19,6 +19,7 @@ interface NodeContent {
 
 export interface PromptNodeData {
   node: GraphNode;
+  rooted?: boolean;
   active: boolean;
   current: boolean;
   runnable: boolean;
@@ -192,7 +193,7 @@ function relative(value: string) {
     @mouseleave="hidePreview"
     @contextmenu.stop
   >
-    <Handle v-if="data.node.parentId" type="target" :position="Position.Left" />
+    <Handle v-if="data.node.parentId || data.rooted" type="target" :position="Position.Left" />
     <Handle type="source" :position="Position.Right" />
     <section class="turn-copy">
       <span class="turn-role" :title="t('graph.you')" :aria-label="t('graph.you')"><UserRound :size="13" /></span>

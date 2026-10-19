@@ -4,6 +4,7 @@ import { projectSession } from "../../src/shared/session";
 import type { ProjectGroup, ProjectInfo, RawSessionEntry, SessionSnapshot, SessionSummary } from "../../src/shared/types";
 import { desktop } from "../../src/renderer/api";
 import { useSessionStore } from "../../src/renderer/stores/session";
+import { useBoardStore } from "../../src/renderer/stores/boards";
 import { useWorkspaceStore } from "../../src/renderer/stores/workspace";
 
 const first: RawSessionEntry[] = [
@@ -43,6 +44,26 @@ function snapshot(entries: RawSessionEntry[], leafId: string): SessionSnapshot {
 describe("session stream focus", () => {
   beforeEach(() => setActivePinia(createPinia()));
   afterEach(() => vi.restoreAllMocks());
+
+  it("does not overwrite a newer session while canvas saving is pending", async () => {
+    const session = useSessionStore();
+    hydrate(session, snapshot(first, "a1"));
+    const opened = { ...session.current!, session: { ...session.current!.session, path: "opened.jsonl" } };
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const saving = vi.spyOn(useBoardStore(), "addSession").mockReturnValue(pending);
+    const invoke = vi.spyOn(desktop, "invoke").mockResolvedValue(opened);
+    const opening = session.open(opened.session.path);
+    await vi.waitFor(() => expect(saving).toHaveBeenCalled());
+    ++session.viewRequest;
+    session.current = { ...opened, session: { ...opened.session, path: "newer.jsonl" } };
+    session.focusedNode = "newer-node";
+    release();
+    await opening;
+    expect(session.current.session.path).toBe("newer.jsonl");
+    expect(session.focusedNode).toBe("newer-node");
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
 
   it("keeps the current streamed session in the navigator", () => {
     const session = useSessionStore();

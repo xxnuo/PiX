@@ -192,8 +192,12 @@ export class RemoteWorkspacePool {
         !record.project.remote && sameHostPath(record.project.path, project.path))?.sessions;
       if (sessions) this.host.rememberProject(sessions, project);
       if (payload.current) this.host.rememberSnapshot(project, payload.current);
+      if (payload.current && (!active || payload.current.session.path !== slot.activePath))
+        this.host.emit({ type: "board.snapshot", payload: { projectId: projectId(project), snapshot: payload.current } });
       if (sessions || payload.current)
         this.host.emit({ type: "sessions", payload: { projects: this.host.projectGroups() } });
+      if (payload.deletedPath)
+        this.host.settings.forgetBoardSession(projectId(project), payload.deletedPath);
       if (!active) return;
       if (payload.deletedPath) {
         if (payload.deletedPath === slot.activePath) {
@@ -883,6 +887,10 @@ export class RemoteWorkspacePool {
       return remoteSettings();
     }
     const result = await client.request(route, v);
+    if (route === "session.delete" && result && typeof result === "object" &&
+      !(result as { cancelled?: boolean; skipped?: boolean }).cancelled &&
+      !(result as { skipped?: boolean }).skipped)
+      this.host.settings.forgetBoardSession(projectId(project), String(v.path));
     if (this.remotePool.get(projectId(project)) !== slot) return result;
     if (route === "session.list" && Array.isArray(result))
       this.host.rememberProject(result as SessionSummary[], project);

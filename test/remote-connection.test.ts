@@ -1415,3 +1415,33 @@ test("a host that never started is not redialed", async (t) => {
   await assert.rejects(controller.connectSsh("old", "/old"), /connect refused/);
   assert.equal(reattach.mock.callCount(), 0);
 });
+
+test("board inspection reads a pooled remote session without selecting it", async t => {
+  const { controller, old, project } = controllerFixture(t);
+  const calls: Array<[string, unknown]> = [];
+  const snapshot = remoteSnapshot("/old/other.jsonl");
+  old.request = async (route, input) => { calls.push([route, input]); return snapshot; };
+  const current = remoteSnapshot("/old/current.jsonl");
+  controller.current = current;
+
+  const inspected = await controller.invoke("session.inspect", { projectId: projectId(project), path: snapshot.session.path });
+
+  assert.equal(inspected, snapshot);
+  assert.deepEqual(calls, [["session.inspect", { path: snapshot.session.path }]]);
+  assert.equal(controller.current, current);
+});
+
+
+test("remote deletion removes board references even with canvas mode disabled", async t => {
+  const { controller, old, project } = controllerFixture(t);
+  const owner = projectId(project), path = "/old/delete.jsonl";
+  controller.settings.saveBoardState({ activeBoardId: "a", groups: [],
+    boards: [{ id: "a", name: "A", groupId: null, projectIds: [owner], sessions: [{ projectId: owner, path }] }],
+  });
+  old.request = async () => ({ sessions: [], cancelled: true });
+  await controller.invoke("session.delete", { path, confirmed: true });
+  assert.equal(controller.settings.boardState().boards[0]!.sessions!.length, 1);
+  old.request = async () => ({ sessions: [] });
+  await controller.invoke("session.delete", { path, confirmed: true });
+  assert.deepEqual(controller.settings.boardState().boards[0]!.sessions, []);
+});

@@ -15,6 +15,7 @@ import ToolPanel from "../tools/ToolPanel.vue";
 import { whenMeasured, whenPanelsSettle, whenVisible, type PanelSettleTarget } from "../../lib/frame";
 import { useLayoutStore } from "../../stores/layout";
 import { useSessionStore } from "../../stores/session";
+import { useBoardStore } from "../../stores/boards";
 
 const emit = defineEmits<{
   settings: [];
@@ -32,6 +33,7 @@ const emit = defineEmits<{
 type PanelHandle = { collapse: () => void; expand: () => void; resize: (size: number) => void };
 const layout = useLayoutStore();
 const session = useSessionStore();
+const boards = useBoardStore();
 const { t } = useI18n();
 const shell = ref<HTMLElement>();
 const navigatorElement = ref<HTMLElement>();
@@ -288,7 +290,7 @@ watch(() => layout.hydrated, async (hydrated) => {
       <SplitterPanel id="primary-panels" :order="1">
         <SplitterGroup id="pix-primary" direction="horizontal" class="workbench-splitter">
           <SplitterPanel id="graph-panel" :order="2" :min-size="24">
-            <GraphPanel class="graph" @new-session="$emit('newSession')" />
+            <GraphPanel class="graph" @new-session="$emit('newSession')" @pick-project="$emit('pickProject')" @activate-project="emit('activateProject', $event)" @create-project-session="emit('createProjectSession', $event)" @open-project-session="(record, path) => emit('openProjectSession', record, path)" />
           </SplitterPanel>
           <SplitterResizeHandle class="resize-handle" :class="{ hidden: layout.layout.collapsed.chat }" />
 
@@ -307,7 +309,7 @@ watch(() => layout.hydrated, async (hydrated) => {
             @collapse="panelState('chat', true)"
             @expand="panelState('chat', false)"
           >
-            <div class="chat-columns">
+            <div v-if="!boards.enabled || (session.current && boards.active?.sessions?.some(item => item.projectId === session.activeProjectId && item.path === session.current?.session.path))" class="chat-columns">
               <BranchContextPanel class="chat" />
               <BranchContextPanel
                 v-for="id in layout.chatColumns"
@@ -316,6 +318,7 @@ watch(() => layout.hydrated, async (hydrated) => {
                 class="chat"
               />
             </div>
+            <div v-else class="board-panel-empty">{{ t('boards.selectSession') }}</div>
           </SplitterPanel>
         </SplitterGroup>
       </SplitterPanel>
@@ -336,7 +339,8 @@ watch(() => layout.hydrated, async (hydrated) => {
         @collapse="panelState('content', true)"
         @expand="panelState('content', false)"
       >
-        <ToolPanel class="content" />
+        <ToolPanel v-if="!boards.enabled || boards.active?.projectIds.includes(session.activeProjectId)" class="content" />
+        <div v-else class="board-panel-empty">{{ t('boards.selectFolderFirst') }}</div>
       </SplitterPanel>
     </SplitterGroup>
   </div>

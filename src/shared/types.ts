@@ -51,6 +51,24 @@ export interface ProjectGroup extends ProjectHistory {
   /** True when the user archived this project out of the navigator. */
   archived?: boolean;
 }
+export interface Board {
+  id: string;
+  name: string;
+  groupId: string | null;
+  projectIds: string[];
+  positions?: Record<string, { x: number; y: number; branch?: boolean }>;
+  viewport?: { x: number; y: number; zoom: number };
+  sessions?: Array<{ projectId: string; path: string }>;
+}
+export interface BoardGroup {
+  id: string;
+  name: string;
+}
+export interface BoardState {
+  boards: Board[];
+  groups: BoardGroup[];
+  activeBoardId: string;
+}
 export function projectId(project: ProjectInfo) {
   const remote = project.remote;
   return remote
@@ -376,6 +394,7 @@ export interface AppSettings {
   deployModelCredentialsToRemote: boolean;
   /** Experimental features are opt-in, default off, and may change or disappear. */
   experimentalHistory: boolean;
+  experimentalCanvas: boolean;
   /** Latest release the user chose to stop being notified about. */
   updateSkippedVersion?: string;
   /** Usage panel preferences: providers on flat subscription plans (coding
@@ -525,6 +544,8 @@ export type DesktopRoute =
   | "ui.respond"
   | "ui.pending"
   | "app.bootstrap"
+  | "board.state"
+  | "board.save"
   | "app.pickProject"
   | "app.openProject"
   | "app.revealLogs"
@@ -550,6 +571,7 @@ export type DesktopRoute =
   | "remote.revoke"
   | "session.list"
   | "session.snapshot"
+  | "session.inspect"
   | "session.open"
   | "session.stop"
   | "session.import"
@@ -582,7 +604,7 @@ export type DesktopRoute =
   | "settings.reset"
   | "layout.save";
 export interface DesktopEvent {
-  type: "agent" | "shell" | "terminal" | "sessions" | "notice" | "remote.progress" | "remote.connection" | "update.available" | "ui.request" | "ui.dismiss";
+  type: "agent" | "shell" | "terminal" | "sessions" | "board.snapshot" | "notice" | "remote.progress" | "remote.connection" | "update.available" | "ui.request" | "ui.dismiss";
   payload: unknown;
 }
 export interface ExtensionDialog {

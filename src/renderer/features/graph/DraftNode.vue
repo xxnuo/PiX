@@ -8,6 +8,7 @@ import PromptComposer, { type ComposerDraft } from "../../components/PromptCompo
 export interface DraftNodeData {
   draftState?: ComposerDraft;
   parentId: string | null;
+  rooted?: boolean;
   runnable: boolean;
   model: RuntimeModel | null;
   thinkingLevel: string;
@@ -24,7 +25,7 @@ const { t } = useI18n();
 
 <template>
   <article class="draft-node nodrag nowheel" @click.stop>
-    <Handle v-if="data.parentId" type="target" :position="Position.Left" />
+    <Handle v-if="data.parentId || data.rooted" type="target" :position="Position.Left" />
     <header>
       <span><i />{{ t("draft.title") }}</span>
       <button v-if="data.onCancel" type="button" :title="t('draft.close')" @click="data.onCancel">

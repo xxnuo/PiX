@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { MainController } from "../src/main/controller.js";
+import { boardNodePositionKey } from "../src/shared/boards.js";
+import { projectId } from "../src/shared/types.js";
 import type { DesktopEvent } from "../src/shared/types.js";
 
 for (const streaming of [false, true]) {
@@ -51,8 +53,16 @@ for (const streaming of [false, true]) {
       await controller.invoke("agent.control", { action: "prompt", text: "first prompt" });
       const path = controller.current!.session.path;
       const runtime = controller.registry.entry(path)!.runtime;
+      const owner = projectId(controller.project!);
+      const positionKey = boardNodePositionKey(owner, path, "turn");
+      controller.settings.saveBoardState({ activeBoardId: "a", groups: [],
+        boards: ["a", "b"].map(id => ({ id, name: id, groupId: null, projectIds: [owner],
+          sessions: [{ projectId: owner, path }], positions: { [positionKey]: { x: 120, y: 240 } } })),
+      });
+      assert.equal(controller.settings.bundle().app.experimentalCanvas, false);
 
       await controller.invoke("session.delete", { path });
+      assert.equal(controller.settings.boardState().boards[0]!.sessions!.length, 1);
       assert.equal(existsSync(path), true, "cancelled deletion preserves the file");
       assert.equal(controller.registry.entry(path)!.runtime, runtime);
       const other = join(controller.files.dir!, "other.jsonl");
@@ -84,6 +94,10 @@ for (const streaming of [false, true]) {
       }
       await controller.invoke("session.delete", { path, confirmed: true });
 
+      for (const board of controller.settings.boardState().boards) {
+        assert.deepEqual(board.sessions, []);
+        assert.equal(board.positions?.[positionKey], undefined);
+      }
       assert.equal(controller.registry.entry(path), undefined);
       assert.equal(controller.current, undefined);
       assert.equal(existsSync(path), false);

@@ -28,9 +28,11 @@ import {
   DropdownMenuTrigger,
 } from "reka-ui";
 import { useI18n } from "vue-i18n";
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { ProjectGroup } from "../../../shared/types";
 import Button from "../../components/ui/Button.vue";
+import BoardList from "./BoardList.vue";
+import { useBoardStore } from "../../stores/boards";
 import NavigatorMenu from "./NavigatorMenu.vue";
 import { useSessionStore } from "../../stores/session";
 import { useLayoutStore } from "../../stores/layout";
@@ -50,6 +52,10 @@ const emit = defineEmits<{
   menuOpenChange: [open: boolean];
 }>();
 const session = useSessionStore();
+const boards = useBoardStore();
+const visibleProjects = computed(() => boards.enabled
+  ? session.filteredProjects.filter(record => boards.active?.projectIds.includes(record.id))
+  : session.filteredProjects);
 const layout = useLayoutStore();
 const { t } = useI18n();
 const expanded = ref(new Set<string>());
@@ -119,7 +125,7 @@ async function revealSession(record: ProjectGroup, path: string) {
 <template>
   <aside class="panel navigator-panel">
     <header class="panel-header">
-      <strong>{{ t("nav.projects") }}</strong>
+      <strong>{{ t(boards.enabled ? "boards.title" : "nav.projects") }}</strong>
       <Button
         data-action="navigator-pin"
         variant="ghost"
@@ -135,6 +141,7 @@ async function revealSession(record: ProjectGroup, path: string) {
       </Button>
     </header>
 
+    <BoardList v-if="boards.enabled" @menu-open-change="emit('menuOpenChange', $event)" />
     <div class="navigator-actions">
       <Button class="grow justify-start" variant="ghost" @click="session.create()">
         <Plus :size="16" />{{ t("nav.newSession") }}
@@ -153,7 +160,7 @@ async function revealSession(record: ProjectGroup, path: string) {
     </label>
 
     <nav class="project-list">
-      <section v-for="record in session.filteredProjects" :key="record.id" class="project-group" :data-project-id="record.id">
+      <section v-for="record in visibleProjects" :key="record.id" class="project-group" :data-project-id="record.id">
         <div class="project-row" :class="{ active: record.id === session.activeProjectId }">
           <button
             class="project-main"
@@ -191,6 +198,7 @@ async function revealSession(record: ProjectGroup, path: string) {
                     <ArchiveRestore v-else :size="14" />
                     {{ t(record.archived ? "nav.unarchiveProject" : "nav.archiveProject") }}
                   </DropdownMenuItem>
+                  <DropdownMenuItem v-if="boards.enabled" class="menu-item" @select="boards.removeProject(record.id).catch(error => layout.showNotice(String(error), 'error'))">{{ t("boards.removeFolder") }}</DropdownMenuItem>
                   <DropdownMenuItem
                     class="menu-item danger"
                     :disabled="record.id === session.activeProjectId"
@@ -265,6 +273,7 @@ async function revealSession(record: ProjectGroup, path: string) {
                   <ContextMenuItem data-action="session-rename" class="menu-item" @select="emit('rename', record, item.path, item.name ?? '')">
                     {{ t("common.rename") }}
                   </ContextMenuItem>
+                  <ContextMenuItem v-if="boards.active?.sessions?.some(open => open.projectId === record.id && open.path === item.path)" class="menu-item" data-action="session-remove-from-board" @select="boards.detachSession(record.id, item.path).catch(error => layout.showNotice(String(error), 'error'))">{{ t("boards.removeSession") }}</ContextMenuItem>
                   <ContextMenuItem data-action="session-archive" class="menu-item" @select="session.archiveSession(item.path, !item.archived)">
                     <Archive v-if="!item.archived" :size="14" />
                     <ArchiveRestore v-else :size="14" />
@@ -288,7 +297,7 @@ async function revealSession(record: ProjectGroup, path: string) {
           <p v-if="!record.sessions.length" class="project-empty">{{ t("nav.noSessions") }}</p>
         </div>
       </section>
-      <p v-if="!session.filteredProjects.length" class="empty-copy">{{ t("nav.noProjects") }}</p>
+      <p v-if="!visibleProjects.length" class="empty-copy">{{ t("nav.noProjects") }}</p>
     </nav>
 
     <footer class="navigator-footer">

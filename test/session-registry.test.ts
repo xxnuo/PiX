@@ -1395,3 +1395,64 @@ test("eviction never disposes an entry that became active while it was closing a
     for (const release of [...gates.values()]) release();
   }
 });
+
+test("inspecting another board session preserves the selected session", async () => {
+  const project = { name: "one", path: "/one" };
+  const registry = new SessionRegistry({
+    createRuntime: entry => ({ open: async () => {}, close: async () => {}, busy: false,
+      snapshot: () => ({ session: { path: entry.path }, entries: [], projection: { nodes: [] } }),
+    }) as never,
+    onEvent: () => {},
+  });
+  try {
+    await registry.open(project, null, "a.jsonl");
+    const inspected = await registry.inspect(project, null, "b.jsonl");
+    assert.equal(inspected.session.path, "b.jsonl");
+    assert.equal(registry.activeOf(projectId(project))?.path, "a.jsonl");
+    assert.ok(registry.entry("b.jsonl"));
+  } finally { await registry.disposeAll(); }
+});
+
+test("two canvas folders run concurrently and publish their own snapshots", { timeout: 30000 }, async () => {
+  const firstFolder = workspace(), secondFolder = workspace();
+  const controller = new MainController(firstFolder, platform);
+  try {
+    const faux = fauxProvider({ models: [{ id: "faux-1", contextWindow: 128_000 }] });
+    injectFaux(controller, faux);
+    const snapshots: Array<{ projectId: string; snapshot: SessionSnapshot }> = [];
+    controller.onEvent(event => {
+      if (event.type === "board.snapshot") snapshots.push(event.payload as typeof snapshots[number]);
+    });
+    const first = await startGatedRun(controller, faux, "first canvas answer");
+    const firstOwner = projectId(controller.project!);
+    controller.configure(secondFolder);
+    const second = await startGatedRun(controller, faux, "second canvas answer");
+    const secondOwner = projectId(controller.project!);
+    const state = { activeBoardId: "combined", groups: [], boards: [{
+      id: "combined", name: "Both folders", groupId: null, projectIds: [firstOwner, secondOwner],
+      sessions: [{ projectId: firstOwner, path: first.path }, { projectId: secondOwner, path: second.path }],
+    }] };
+    await controller.invoke("board.save", { state });
+    const inspected = await controller.invoke("session.inspect", { projectId: firstOwner, path: first.path }) as SessionSnapshot;
+    assert.ok(inspected.graph!.runs.some(run => run.status === "running"));
+    assert.ok(second.entry.runtime!.snapshot().graph!.runs.some(run => run.status === "running"));
+    assert.equal(controller.current!.session.path, second.path);
+    await first.finish();
+    await until(() => snapshots.some(item => item.projectId === firstOwner &&
+      item.snapshot.session.path === first.path && JSON.stringify(item.snapshot.entries).includes("first canvas answer")));
+    assert.equal(controller.current!.session.path, second.path);
+    assert.ok(second.entry.runtime!.snapshot().graph!.runs.some(run => run.status === "running"));
+    await second.finish();
+    const firstResult = await controller.invoke("session.inspect", { projectId: firstOwner, path: first.path }) as SessionSnapshot;
+    const secondResult = await controller.invoke("session.inspect", { projectId: secondOwner, path: second.path }) as SessionSnapshot;
+    assert.ok(JSON.stringify(firstResult.entries).includes("first canvas answer"));
+    assert.ok(JSON.stringify(secondResult.entries).includes("second canvas answer"));
+    assert.equal(controller.current!.session.path, second.path);
+    assert.equal(controller.settings.boardState().boards[0]!.sessions!.length, 2);
+  } finally {
+    await controller.closeSessions();
+    controller.dispose();
+    rmSync(firstFolder, { recursive: true, force: true });
+    rmSync(secondFolder, { recursive: true, force: true });
+  }
+});
